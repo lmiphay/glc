@@ -6,35 +6,25 @@ import invoke
 from invoke import task
 import lxc
 import requests
+import StringIO
 import sys
 
-# extract with: tar xvjpf stage3-amd64-*.tar.bz2 --xattrs --numeric-owner
-# see: https://wiki.gentoo.org/wiki/Sakaki%27s_EFI_Install_Guide/Installing_the_Gentoo_Stage_3_Files#Downloading.2C_Verifying_and_Unpacking_the_Gentoo_Stage_3_Tarball
-# /usr/share/lxc/templates/lxc-gentoo:cache_stage3() is missing the --xattrs
-#cache_setup(){
-#    partialfs="${cacheroot}/partial-${arch}-${variant}"
-    #if cache exists and flush not needed, return
-#    [[ -d "${cachefs}" && -z "${flush_cache}" ]] && return 0
-#cacheroot="${LXC_CACHE_PATH:-"/var/cache/lxc"}/gentoo"
-#portage_cache="${cacheroot}/portage.tbz"
-#cachefs="${cacheroot}/rootfs-${arch}-${variant}"
 
-# Gentoo Linux Release Engineering (Automated weekly release key)
-# See: https://wiki.gentoo.org/wiki/Project:RelEng#Keys
-# Expires: 2019-08-22
-REL_ENG_KEY_ID = '0xBB572E0E2D182910'
-REL_ENG_KEY_FINGERPRINT='13EB BDBE DE7A 1277 5DFD  B1BA BB57 2E0E 2D18 2910'
+def has_key(ctx, fingerprint):
+    compact = fingerprint.replace(' ', '')
+    return 'fpr:::::::::{}:'.format(compact) in ctx.run('gpg --list-public-keys --with-colons').stdout
+
 
 @task(optional=['fetch'])
-def key(ctx, fetch=None, key_id=REL_ENG_KEY_ID, fingerprint=REL_ENG_KEY_FINGERPRINT):
+def key(ctx, fetch=None):
     """
     fetch/check the Rel Eng signing key
     """
-    if fetch:
-        ctx.run('gpg --keyserver hkp://pool.sks-keyservers.net:80 --recv-key {}'.format(key_id), echo=True)
-    actual = ctx.run('gpg --fingerprint {}'.format(key_id), echo=True).stdout.split('\n')[1].strip()
-    if actual != fingerprint:
-        sys.exit('fingerprints do not match:\n  {} (expected)\n  {} (actual)\n'.format(fingerprint, actual))
+    if fetch or not has_key(ctx.glc.key.fingerprint):
+        ctx.run('gpg --keyserver hkp://pool.sks-keyservers.net:80 --recv-key {}'.format(ctx.glc.key.key_id), echo=True)
+    actual = ctx.run('gpg --fingerprint {}'.format(ctx.glc.key.key_id), echo=True).stdout.split('\n')[1].strip()
+    if actual != ctx.glc.key.fingerprint:
+        sys.exit('fingerprints do not match:\n  {} (expected)\n  {} (actual)\n'.format(ctx.glc.key.fingerprint, actual))
     else:
         print('key fingerprints match')
 
@@ -62,15 +52,20 @@ def status(ctx):
 @task
 def validate(ctx, tarball):
     with ctx.cd(ctx.glc.cache_dir):
-        if ctx.run('gpg --verify {}.DIGESTS.asc'.format(tarball)):
-            if ctx.run("""awk '/SHA512 HASH/{getline;print}' {}.DIGESTS.asc | sha512sum --check""".format(tarball)):
-                print('{} validated'.format(tarball))
-            else:
-                sys.exit('checksum failed for: {}'.format(tarball))
-        else:
-                sys.exit('signature verification failed for: {}.DIGESTS.asc'.format(tarball))
-        #ctx.run('openssl dgst -r -sha512 {}'.format(tarball))
-        #ctx.run('openssl dgst -r -whirlpool {}'.format(tarball))
+        if not ctx.run('gpg --verify {}.DIGESTS.asc'.format(tarball)):
+            sys.exit('signature verification failed for: {}.DIGESTS.asc'.format(tarball))
+        with open('{}.DIGESTS.asc'.format(tarball), 'r') as digests:
+            line = digests.readline()
+            while line:
+                if 'SHA512 HASH' in line:
+                    checksum, hash_content = 'sha512sum', digests.readline()
+                elif 'WHIRLPOOL HASH' in line:
+                    checksum, hash_content = 'whirlpool-hash', digests.readline()
+                else:
+                    continue
+                if not ctx.run('{} --check'.format(checksum), in_stream=StringIO(hash_content)):
+                    sys.exit('{} checksum failed for: {}'.format(line, hash_content))
+                line = digests.readline()
 
 
 @task  # (post=[validate])
