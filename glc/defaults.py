@@ -15,6 +15,13 @@ DEFAULT_CONFIG = {
         'variant': 'amd64',
         'backingstorage': 'overlay',
         'cache_dir': '/var/cache/glc',
+        'key': {
+            # Gentoo Linux Release Engineering (Automated weekly release key)
+            # See: https://wiki.gentoo.org/wiki/Project:RelEng#Keys
+            # Expires: 2019-08-22
+            'key_id': '0xBB572E0E2D182910',
+            'fingerprint': '13EB BDBE DE7A 1277 5DFD  B1BA BB57 2E0E 2D18 2910'  # note extra space in the middle
+        },
         'latest_tarball': 'STAGE3-LATEST.tar.bz2',
         'stage_server': {
             'url_base': 'http://distfiles.gentoo.org/releases/{arch}/autobuilds',
